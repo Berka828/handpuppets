@@ -4,14 +4,19 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kids Shadow Puppet Game</title>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/vision_bundle.js" crossorigin="anonymous"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@3.11.0/dist/tf-core.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@3.11.0/dist/tf-converter.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@3.11.0/dist/tf-backend-webgl.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/handpose@0.0.7/dist/handpose.min.js"></script>
+
     <style>
         body {
             margin: 0;
             padding: 0;
             background: #1a1a2e;
             color: #fff;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -34,7 +39,7 @@
             left: 0;
             width: 640px;
             height: 480px;
-            transform: scaleX(-1);
+            transform: scaleX(-1); /* Flip for mirror effect */
         }
         #ui-overlay {
             position: absolute;
@@ -56,7 +61,7 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(15, 52, 96, 0.9);
+            background: rgba(15, 52, 96, 0.95);
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -76,146 +81,126 @@
 <body>
 
     <h1>✨ Shadow Puppet Magic ✨</h1>
-    <p style="margin-top:0; color:#bbb;">Can you make a Bird/Butterfly shadow?</p>
+    <p style="margin-top:0; color:#bbb;">Make a shadow shape with your hand!</p>
 
     <div id="game-container">
-        <video id="webcam" autoplay playsinline></video>
+        <video id="webcam" autoplay playsinline style="opacity: 0.3;"></video>
         <canvas id="output_canvas"></canvas>
-        <div id="ui-overlay">Step 1: Initializing Page...</div>
+        <div id="ui-overlay">Loading shadow engine scripts...</div>
 
         <div id="success-screen">
-            <h2 style="font-size: 2.5rem; color: #4ecca3;">🎉 Amazing Job! 🎉</h2>
-            <p>You successfully summoned the Bird Puppet!</p>
+            <h2 style="font-size: 2.5rem; color: #4ecca3;">🎉 Spectacular! 🎉</h2>
+            <p>You created a beautiful shadow puppet!</p>
             <button class="btn" onclick="resetGame()">Play Again</button>
         </div>
     </div>
 
-    <script type="module">
-        import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/vision_bundle.js";
-
+    <script>
         const video = document.getElementById("webcam");
         const canvasElement = document.getElementById("output_canvas");
         const canvasCtx = canvasElement.getContext("2d");
         const uiOverlay = document.getElementById("ui-overlay");
         const successScreen = document.getElementById("success-screen");
 
-        let handLandmarker = undefined;
-        let webcamRunning = false;
+        let model = undefined;
         let isGameWon = false;
 
-        async function runDemo() {
+        async function setupApp() {
             try {
-                uiOverlay.innerText = "Step 2: Downloading AI tracking assets (WASM)...";
-                const vision = await FilesetResolver.forVisionTasks(
-                    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
-                );
+                uiOverlay.innerText = "Downloading the AI brain... (Please wait)";
+                // Load the legacy handpose model
+                model = await handpose.load();
                 
-                uiOverlay.innerText = "Step 3: Loading AI Hand Recognition Model...";
-                handLandmarker = await HandLandmarker.createFromOptions(vision, {
-                    baseOptions: {
-                        modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
-                        delegate: "GPU"
-                    },
-                    runningMode: "VIDEO",
-                    numHands: 2
-                });
-                
-                uiOverlay.innerText = "Step 4: Requesting Webcam access...";
-                startWebcam();
+                uiOverlay.innerText = "Opening camera... Please grant permission.";
+                setupWebcam();
             } catch (error) {
-                console.error("Initialization Failed:", error);
-                uiOverlay.innerHTML = `<span style="color: #ff4a4a;">Error: ${error.message}<br>Try running through a local server or check browser console.</span>`;
+                console.error(error);
+                uiOverlay.innerHTML = `<span style="color:#ff4a4a;">Failed to load. Try refreshing or use a different browser like Chrome.</span>`;
             }
         }
 
-        function startWebcam() {
+        function setupWebcam() {
             navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
             .then((stream) => {
                 video.srcObject = stream;
-                video.addEventListener("loadeddata", () => {
-                    webcamRunning = true;
+                video.onloadedmetadata = () => {
+                    video.play();
                     canvasElement.width = video.videoWidth;
                     canvasElement.height = video.videoHeight;
-                    uiOverlay.innerText = "👐 Spread your hands & cross thumbs to make a Bird!";
-                    window.requestAnimationFrame(predictLoop);
-                });
+                    uiOverlay.innerText = "👐 Put your hand up to make a shadow puppet!";
+                    animate();
+                };
             })
             .catch((err) => {
-                console.error("Camera Access Denied:", err);
-                uiOverlay.innerHTML = `<span style="color: #ff4a4a;">Webcam Error: Please grant camera access and refresh!</span>`;
+                uiOverlay.innerHTML = `<span style="color:#ff4a4a;">Webcam blocked. Please allow camera access!</span>`;
             });
         }
 
-        let lastVideoTime = -1;
-        async function predictLoop() {
-            if (video.currentTime !== lastVideoTime && webcamRunning) {
-                lastVideoTime = video.currentTime;
-                let startTimeMs = performance.now();
-                const results = handLandmarker.detectForVideo(video, startTimeMs);
+        async function animate() {
+            if (!isGameWon) {
+                // Predict hands in the video frame
+                const predictions = await model.estimateHands(video);
 
                 canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-                if (results.landmarks && results.landmarks.length > 0) {
-                    drawShadowSilhouette(results.landmarks);
-                    if (!isGameWon) { checkPuppetMatch(results.landmarks); }
+                if (predictions.length > 0) {
+                    // Draw the custom silhouette
+                    drawPuppet(predictions[0].landmarks);
+                    
+                    // Simple gesture logic: check if fingers are extended high up
+                    const landmarks = predictions[0].landmarks;
+                    const isHandOpen = landmarks[8][1] < landmarks[6][1] && landmarks[12][1] < landmarks[10][1];
+                    
+                    if (isHandOpen) {
+                        isGameWon = true;
+                        uiOverlay.innerText = "✨ Sparkle! Shadow detected! ✨";
+                        successScreen.classList.add("visible");
+                    }
                 }
             }
-            window.requestAnimationFrame(predictLoop);
+            requestAnimationFrame(animate);
         }
 
-        function drawShadowSilhouette(allHands) {
+        function drawPuppet(landmarks) {
             canvasCtx.save();
-            canvasCtx.fillStyle = "rgba(10, 10, 25, 0.88)";
-            canvasCtx.strokeStyle = "rgba(10, 10, 25, 0.88)";
-            canvasCtx.lineWidth = 14;
+            canvasCtx.fillStyle = "rgba(15, 15, 30, 0.95)";
+            canvasCtx.strokeStyle = "rgba(15, 15, 30, 0.95)";
+            canvasCtx.lineWidth = 16;
             canvasCtx.lineJoin = "round";
 
-            allHands.forEach(landmarks => {
-                canvasCtx.beginPath();
-                canvasCtx.moveTo(landmarks[0].x * canvasElement.width, landmarks[0].y * canvasElement.height);
-                canvasCtx.lineTo(landmarks[5].x * canvasElement.width, landmarks[5].y * canvasElement.height);
-                canvasCtx.lineTo(landmarks[17].x * canvasElement.width, landmarks[17].y * canvasElement.height);
-                canvasCtx.closePath();
-                canvasCtx.fill();
-                canvasCtx.stroke();
+            // Draw palm base
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(landmarks[0][0], landmarks[0][1]);
+            canvasCtx.lineTo(landmarks[5][0], landmarks[5][1]);
+            canvasCtx.lineTo(landmarks[17][0], landmarks[17][1]);
+            canvasCtx.closePath();
+            canvasCtx.fill();
+            canvasCtx.stroke();
 
-                const fingerChains = [
-                    [0, 1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16], [17, 18, 19, 20]
-                ];
-                fingerChains.forEach(chain => {
-                    canvasCtx.beginPath();
-                    canvasCtx.moveTo(landmarks[chain[0]].x * canvasElement.width, landmarks[chain[0]].y * canvasElement.height);
-                    for(let i=1; i < chain.length; i++) {
-                        canvasCtx.lineTo(landmarks[chain[i]].x * canvasElement.width, landmarks[chain[i]].y * canvasElement.height);
-                    }
-                    canvasCtx.stroke();
-                });
+            // Trace 5 fingers
+            const fingers = [
+                [0, 1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16], [17, 18, 19, 20]
+            ];
+            
+            fingers.forEach(nodes => {
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(landmarks[nodes[0]][0], landmarks[nodes[0]][1]);
+                for(let i = 1; i < nodes.length; i++) {
+                    canvasCtx.lineTo(landmarks[nodes[i]][0], landmarks[nodes[i]][1]);
+                }
+                canvasCtx.stroke();
             });
             canvasCtx.restore();
-        }
-
-        function checkPuppetMatch(allHands) {
-            if (allHands.length < 2) return;
-            const hand1 = allHands[0];
-            const hand2 = allHands[1];
-            const hand1Open = hand1[8].y < hand1[6].y && hand1[12].y < hand1[10].y;
-            const hand2Open = hand2[8].y < hand2[6].y && hand2[12].y < hand2[10].y;
-            const distanceBetweenWrists = Math.hypot(hand1[0].x - hand2[0].x, hand1[0].y - hand2[0].y);
-            
-            if (hand1Open && hand2Open && distanceBetweenWrists < 0.4) {
-                isGameWon = true;
-                uiOverlay.innerText = "✨ MAGIC DETECTED! ✨";
-                successScreen.classList.add("visible");
-            }
         }
 
         window.resetGame = function() {
             isGameWon = false;
             successScreen.classList.remove("visible");
-            uiOverlay.innerText = "👐 Spread your hands & cross thumbs to make a Bird!";
+            uiOverlay.innerText = "👐 Put your hand up to make a shadow puppet!";
         }
 
-        runDemo();
+        // Start everything
+        setupApp();
     </script>
 </body>
 </html>
