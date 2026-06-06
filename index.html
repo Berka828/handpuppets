@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kids Shadow Puppet Game</title>
+    <!-- Load MediaPipe and Vision Tasks API -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/vision_bundle.js" crossorigin="anonymous"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1a1a2e;
+            color: #fff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        h1 {
+            margin-bottom: 5px;
+            color: #e94560;
+        }
+
+        #game-container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            background: #162447;
+        }
+
+        video, canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 640px;
+            height: 480px;
+            transform: scaleX(-1); /* Mirror view for natural interaction */
+        }
+
+        /* Pure black silhouette effect overlay to match the "shadow" look */
+        #shadow-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 640px;
+            height: 480px;
+            pointer-events: none;
+            mix-blend-mode: multiply; /* Helps block light behind the hand shadows */
+        }
+
+        #ui-overlay {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(26, 26, 46, 0.85);
+            padding: 12px 25px;
+            border-radius: 25px;
+            text-align: center;
+            font-size: 1.2rem;
+            font-weight: bold;
+            border: 2px solid #e94560;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        #success-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(15, 52, 96, 0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.4s ease;
+            pointer-events: none;
+            z-index: 20;
+        }
+
+        #success-screen.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .btn {
+            background: #e94560;
+            color: white;
+            border: none;
+            padding: 10px 25px;
+            font-size: 1.1rem;
+            border-radius: 20px;
+            cursor: pointer;
+            margin-top: 15px;
+            font-weight: bold;
+            transition: transform 0.2s;
+        }
+        .btn:hover { transform: scale(1.05); }
+    </style>
+</head>
+<body>
+
+    <h1>✨ Shadow Puppet Magic ✨</h1>
+    <p style="margin-top:0; color:#bbb;">Can you make a Bird/Butterfly shadow?</p>
+
+    <div id="game-container">
+        <!-- Webcam source -->
+        <video id="webcam" autoplay playsinline></video>
+        <!-- Overlay canvas for digital shadow puppetry tracking -->
+        <canvas id="output_canvas"></canvas>
+        
+        <div id="ui-overlay">Loading magic tracking...</div>
+
+        <!-- Success celebration panel -->
+        <div id="success-screen">
+            <h2 style="font-size: 2.5rem; margin: 0; color: #4ecca3;">🎉 Amazing Job! 🎉</h2>
+            <p>You successfully summoned the Bird Puppet!</p>
+            <button class="btn" onclick="resetGame()">Play Again</button>
+        </div>
+    </div>
+
+    <script type="module">
+        // Import required tracking tools from MediaPipe CDN
+        import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/vision_bundle.js";
+
+        const video = document.getElementById("webcam");
+        const canvasElement = document.getElementById("output_canvas");
+        const canvasCtx = canvasElement.getContext("2d");
+        const uiOverlay = document.getElementById("ui-overlay");
+        const successScreen = document.getElementById("success-screen");
+
+        let handLandmarker = undefined;
+        let webcamRunning = false;
+        let isGameWon = false;
+
+        // Initialize MediaPipe AI Hand tracking engine
+        async function runDemo() {
+            uiOverlay.innerText = "Waking up the AI camera...";
+            const vision = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
+            );
+            handLandmarker = await HandLandmarker.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
+                    delegate: "GPU"
+                },
+                runningMode: "VIDEO",
+                numHands: 2 // Allow two hands to create interlocking shadow puppets!
+            });
+            
+            uiOverlay.innerText = "Please allow webcam access 🎥";
+            startWebcam();
+        }
+
+        // Hook up the user's camera
+        function startWebcam() {
+            navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
+            .then((stream) => {
+                video.srcObject = stream;
+                video.addEventListener("loadeddata", () => {
+                    webcamRunning = true;
+                    canvasElement.width = video.videoWidth;
+                    canvasElement.height = video.videoHeight;
+                    uiOverlay.innerText = "👐 Spread your hands & cross thumbs to make a Bird!";
+                    window.requestAnimationFrame(predictLoop);
+                });
+            })
+            .catch((err) => {
+                console.error("Camera error: ", err);
+                uiOverlay.innerText = "Oh no! Couldn't access your camera.";
+            });
+        }
+
+        let lastVideoTime = -1;
+        
+        // Frame-by-frame tracking loop
+        async function predictLoop() {
+            if (video.currentTime !== lastVideoTime && webcamRunning) {
+                lastVideoTime = video.currentTime;
+                let startTimeMs = performance.now();
+                const results = handLandmarker.detectForVideo(video, startTimeMs);
+
+                // Clear the drawing surface
+                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+                if (results.landmarks && results.landmarks.length > 0) {
+                    // Turn tracking points into a cohesive dark shadow silhouette
+                    drawShadowSilhouette(results.landmarks);
+                    
+                    // Only analyze shapes if the kid hasn't already won this round
+                    if (!isGameWon) {
+                        checkPuppetMatch(results.landmarks);
+                    }
+                }
+            }
+            window.requestAnimationFrame(predictLoop);
+        }
+
+        // Custom drawing logic: instead of skeleton points, let's draw dark "shadow pools"
+        function drawShadowSilhouette(allHands) {
+            canvasCtx.save();
+            // Deep shadow color
+            canvasCtx.fillStyle = "rgba(10, 10, 25, 0.88)";
+            canvasCtx.strokeStyle = "rgba(10, 10, 25, 0.88)";
+            canvasCtx.lineWidth = 14;
+            canvasCtx.lineJoin = "round";
+
+            allHands.forEach(landmarks => {
+                // Draw palm structure polygon
+                canvasCtx.beginPath();
+                canvasCtx.moveTo(landmarks[0].x * canvasElement.width, landmarks[0].y * canvasElement.height);
+                canvasCtx.lineTo(landmarks[5].x * canvasElement.width, landmarks[5].y * canvasElement.height);
+                canvasCtx.lineTo(landmarks[17].x * canvasElement.width, landmarks[17].y * canvasElement.height);
+                canvasCtx.closePath();
+                canvasCtx.fill();
+                canvasCtx.stroke();
+
+                // Draw fingers as thick shadow strokes
+                const fingerChains = [
+                    [0, 1, 2, 3, 4],       // Thumb
+                    [5, 6, 7, 8],          // Index
+                    [9, 10, 11, 12],       // Middle
+                    [13, 14, 15, 16],      // Ring
+                    [17, 18, 19, 20]       // Pinky
+                ];
+
+                fingerChains.forEach(chain => {
+                    canvasCtx.beginPath();
+                    canvasCtx.moveTo(landmarks[chain[0]].x * canvasElement.width, landmarks[chain[0]].y * canvasElement.height);
+                    for(let i=1; i < chain.length; i++) {
+                        canvasCtx.lineTo(landmarks[chain[i]].x * canvasElement.width, landmarks[chain[i]].y * canvasElement.height);
+                    }
+                    canvasCtx.stroke();
+                });
+            });
+            canvasCtx.restore();
+        }
+
+        // Kid-friendly algorithmic gesture recognition
+        // Target: A "Bird/Butterfly" where two open hands overlap near the thumbs/palms
+        function checkPuppetMatch(allHands) {
+            if (allHands.length < 2) {
+                return; // We need both hands to make our bird puppet!
+            }
+
+            const hand1 = allHands[0];
+            const hand2 = allHands[1];
+
+            // Core check 1: Are both hands completely spread open? (Fingers higher up than knuckle roots)
+            const hand1Open = hand1[8].y < hand1[6].y && hand1[12].y < hand1[10].y && hand1[16].y < hand1[14].y;
+            const hand2Open = hand2[8].y < hand2[6].y && hand2[12].y < hand2[10].y && hand2[16].y < hand2[14].y;
+
+            // Core check 2: Are the two hands close together (interlocked at the base/thumbs to make the body)?
+            // Distance between the two wrist/base points
+            const distanceBetweenWrists = Math.hypot(hand1[0].x - hand2[0].x, hand1[0].y - hand2[0].y);
+            const handsAreInterlocked = distanceBetweenWrists < 0.35; // Normalized relative distance
+
+            if (hand1Open && hand2Open && handsAreInterlocked) {
+                triggerWin();
+            }
+        }
+
+        function triggerWin() {
+            isGameWon = true;
+            uiOverlay.innerText = "✨ MAGIC DETECTED! ✨";
+            successScreen.classList.add("visible");
+        }
+
+        // Let the script register the reset handler globally for the button click
+        window.resetGame = function() {
+            isGameWon = false;
+            successScreen.classList.remove("visible");
+            uiOverlay.innerText = "👐 Spread your hands & cross thumbs to make a Bird!";
+        }
+
+        // Initialize everything
+        runDemo();
+    </script>
+</body>
+</html>
