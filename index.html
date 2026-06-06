@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kids Shadow Puppet Game</title>
+    <title>Kids AI Shadow Puppet Theatre</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@3.11.0/dist/tf-core.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@3.11.0/dist/tf-converter.min.js"></script>
@@ -14,112 +14,161 @@
         body {
             margin: 0;
             padding: 0;
-            background: #1a1a2e;
+            background: #111d2e;
             color: #fff;
-            font-family: sans-serif;
+            font-family: 'Segoe UI', Arial, sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             min-height: 100vh;
         }
-        h1 { margin-bottom: 5px; color: #e94560; }
-        #game-container {
+        h1 { margin: 10px 0 2px 0; color: #ffbc57; font-size: 2.2rem; text-shadow: 0 4px 10px rgba(0,0,0,0.5); }
+        p { margin: 0 0 15px 0; color: #a4b3c6; font-size: 1.1rem; }
+
+        #theater-frame {
             position: relative;
             width: 640px;
             height: 480px;
-            border-radius: 15px;
+            border: 8px solid #2c3e50;
+            border-radius: 20px;
             overflow: hidden;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-            background: #162447;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.7);
+            background: #f7e1b5; /* Light back-lit paper puppet look */
         }
-        video, canvas {
+
+        /* Video is hidden or faintly visible in the background */
+        video {
+            position: absolute;
+            width: 640px;
+            height: 480px;
+            transform: scaleX(-1);
+            opacity: 0.05; 
+            z-index: 1;
+        }
+
+        /* Canvas for drawing the digital hand shadows and magical transformations */
+        canvas {
             position: absolute;
             top: 0;
             left: 0;
             width: 640px;
             height: 480px;
-            transform: scaleX(-1); /* Flip for mirror effect */
+            transform: scaleX(-1);
+            z-index: 3;
         }
-        #ui-overlay {
+
+        /* Guide Image Blueprint so kids know what shape to make */
+        #puppet-guide {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) scaleX(-1);
+            width: 280px;
+            height: 280px;
+            opacity: 0.25;
+            z-index: 2;
+            pointer-events: none;
+            transition: all 0.5s ease;
+        }
+
+        #ui-panel {
             position: absolute;
             bottom: 20px;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(26, 26, 46, 0.9);
-            padding: 12px 25px;
-            border-radius: 25px;
+            background: rgba(20, 30, 48, 0.95);
+            padding: 12px 30px;
+            border-radius: 30px;
             text-align: center;
-            font-size: 1.1rem;
-            border: 2px solid #e94560;
+            font-weight: bold;
+            border: 2px solid #ffbc57;
             z-index: 10;
-            width: 80%;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.4);
+            min-width: 300px;
         }
-        #success-screen {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(15, 52, 96, 0.95);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            opacity: 0;
-            transition: opacity 0.4s ease;
-            pointer-events: none;
-            z-index: 20;
+
+        .success-flash {
+            animation: flashBg 0.6s ease-out;
         }
-        #success-screen.visible { opacity: 1; pointer-events: auto; }
-        .btn {
-            background: #e94560; color: white; border: none; padding: 10px 25px;
-            font-size: 1.1rem; border-radius: 20px; cursor: pointer; margin-top: 15px;
+        @keyframes flashBg {
+            0% { background: #f7e1b5; }
+            50% { background: #a2f9be; }
+            100% { background: #f7e1b5; }
         }
     </style>
 </head>
 <body>
 
-    <h1>✨ Shadow Puppet Magic ✨</h1>
-    <p style="margin-top:0; color:#bbb;">Make a shadow shape with your hand!</p>
+    <h1>🎭 Shadow Puppet Theatre 🎭</h1>
+    <p>Move your hands to match the magical templates!</p>
 
-    <div id="game-container">
-        <video id="webcam" autoplay playsinline style="opacity: 0.3;"></video>
+    <div id="theater-frame">
+        <video id="webcam" autoplay playsinline></video>
         <canvas id="output_canvas"></canvas>
-        <div id="ui-overlay">Loading shadow engine scripts...</div>
+        
+        <svg id="puppet-guide" viewBox="0 0 100 100">
+            <path id="guide-path" d="" fill="#2c3e50"/>
+        </svg>
 
-        <div id="success-screen">
-            <h2 style="font-size: 2.5rem; color: #4ecca3;">🎉 Spectacular! 🎉</h2>
-            <p>You created a beautiful shadow puppet!</p>
-            <button class="btn" onclick="resetGame()">Play Again</button>
-        </div>
+        <div id="ui-panel">Waking up the puppet engine...</div>
     </div>
 
     <script>
         const video = document.getElementById("webcam");
         const canvasElement = document.getElementById("output_canvas");
         const canvasCtx = canvasElement.getContext("2d");
-        const uiOverlay = document.getElementById("ui-overlay");
-        const successScreen = document.getElementById("success-screen");
+        const uiPanel = document.getElementById("ui-panel");
+        const guidePath = document.getElementById("guide-path");
+        const guideSvg = document.getElementById("puppet-guide");
+        const theaterFrame = document.getElementById("theater-frame");
 
         let model = undefined;
-        let isGameWon = false;
+        let currentLevel = 0;
+        let isTransforming = false;
+        let transformTimer = 0;
 
-        async function setupApp() {
+        // Vector data for the animal guide shapes and colors
+        const levels = [
+            {
+                name: "Flying Bird",
+                instructions: "🦅 Spread your hand flat and tilt it sideways like a wing!",
+                color: "#e67e22", // Morphs into a golden eagle color
+                svgPath: "M10,50 Q30,20 50,45 Q70,20 90,50 Q50,65 10,50 Z M45,45 Q50,35 52,45 Z",
+                // Requirement: hand must be open and rotated sideways
+                checkPose: (landmarks) => {
+                    const isOpen = landmarks[8][1] < landmarks[6][1] && landmarks[12][1] < landmarks[10][1];
+                    const isSideways = Math.abs(landmarks[9][0] - landmarks[0][0]) > 40; 
+                    return isOpen && isSideways;
+                }
+            },
+            {
+                name: "Snapping Crab",
+                instructions: "🦀 Make a tight fist with your thumb sticking straight up!",
+                color: "#e74c3c", // Morphs into a bright ocean crab red
+                svgPath: "M20,60 Q20,30 50,30 Q80,30 80,60 Q50,80 20,60 M25,35 Q15,15 35,25 M75,35 Q85,15 65,25",
+                // Requirement: fingers curled tight (fist), thumb extended
+                checkPose: (landmarks) => {
+                    const indexCurled = landmarks[8][1] > landmarks[6][1];
+                    const pinkyCurled = landmarks[20][1] > landmarks[18][1];
+                    const thumbUp = landmarks[4][1] < landmarks[2][1];
+                    return indexCurled && pinkyCurled && thumbUp;
+                }
+            }
+        ];
+
+        async function init() {
             try {
-                uiOverlay.innerText = "Downloading the AI brain... (Please wait)";
-                // Load the legacy handpose model
+                uiPanel.innerText = "Loading AI Brain... Please wait.";
                 model = await handpose.load();
-                
-                uiOverlay.innerText = "Opening camera... Please grant permission.";
-                setupWebcam();
-            } catch (error) {
-                console.error(error);
-                uiOverlay.innerHTML = `<span style="color:#ff4a4a;">Failed to load. Try refreshing or use a different browser like Chrome.</span>`;
+                uiPanel.innerText = "Click 'Allow' on your webcam popup!";
+                startCamera();
+            } catch (e) {
+                uiPanel.innerHTML = "<span style='color:#ff6b6b;'>Error starting application. Try Google Chrome.</span>";
             }
         }
 
-        function setupWebcam() {
+        function startCamera() {
             navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
             .then((stream) => {
                 video.srcObject = stream;
@@ -127,48 +176,63 @@
                     video.play();
                     canvasElement.width = video.videoWidth;
                     canvasElement.height = video.videoHeight;
-                    uiOverlay.innerText = "👐 Put your hand up to make a shadow puppet!";
-                    animate();
+                    loadLevel();
+                    loop();
                 };
-            })
-            .catch((err) => {
-                uiOverlay.innerHTML = `<span style="color:#ff4a4a;">Webcam blocked. Please allow camera access!</span>`;
+            }).catch(() => {
+                uiPanel.innerText = "Webcam blocked. Refresh and try again!";
             });
         }
 
-        async function animate() {
-            if (!isGameWon) {
-                // Predict hands in the video frame
-                const predictions = await model.estimateHands(video);
-
-                canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-
-                if (predictions.length > 0) {
-                    // Draw the custom silhouette
-                    drawPuppet(predictions[0].landmarks);
-                    
-                    // Simple gesture logic: check if fingers are extended high up
-                    const landmarks = predictions[0].landmarks;
-                    const isHandOpen = landmarks[8][1] < landmarks[6][1] && landmarks[12][1] < landmarks[10][1];
-                    
-                    if (isHandOpen) {
-                        isGameWon = true;
-                        uiOverlay.innerText = "✨ Sparkle! Shadow detected! ✨";
-                        successScreen.classList.add("visible");
-                    }
-                }
-            }
-            requestAnimationFrame(animate);
+        function loadLevel() {
+            isTransforming = false;
+            guideSvg.style.opacity = "0.25";
+            guideSvg.style.transform = "translate(-50%, -50%) scale(1)";
+            
+            const level = levels[currentLevel];
+            guidePath.setAttribute("d", level.svgPath);
+            guidePath.setAttribute("fill", "#2c3e50"); // Reset back to a dark shadow color
+            uiPanel.innerHTML = `<span style="color:#ffbc57;">Level ${currentLevel + 1}: ${level.name}</span><br><small>${level.instructions}</small>`;
         }
 
-        function drawPuppet(landmarks) {
-            canvasCtx.save();
-            canvasCtx.fillStyle = "rgba(15, 15, 30, 0.95)";
-            canvasCtx.strokeStyle = "rgba(15, 15, 30, 0.95)";
-            canvasCtx.lineWidth = 16;
-            canvasCtx.lineJoin = "round";
+        async function loop() {
+            const predictions = await model.estimateHands(video);
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-            // Draw palm base
+            if (predictions.length > 0) {
+                const landmarks = predictions[0].landmarks;
+                
+                // Draw the natural dark hand shadow
+                drawHandShadow(landmarks);
+
+                if (!isTransforming) {
+                    // Check if current shadow pose satisfies animal requirements
+                    if (levels[currentLevel].checkPose(landmarks)) {
+                        triggerTransformation(landmarks[9]); // Pass middle knuckle coordinate
+                    }
+                } else {
+                    // We are in morph mode! Draw the animal overlay instead of stopping
+                    drawAnimalTransformation(landmarks[9]);
+                }
+            } else if (isTransforming) {
+                // If they hide their hand during transformation, keep rendering the celebration animal
+                drawAnimalTransformation([320, 240]);
+            }
+
+            requestAnimationFrame(loop);
+        }
+
+        function drawHandShadow(landmarks) {
+            canvasCtx.save();
+            // Create a soft, realistic candle-lit shadow color
+            canvasCtx.fillStyle = "rgba(25, 20, 35, 0.9)";
+            canvasCtx.strokeStyle = "rgba(25, 20, 35, 0.9)";
+            canvasCtx.lineWidth = 18;
+            canvasCtx.lineJoin = "round";
+            canvasCtx.shadowBlur = 15;
+            canvasCtx.shadowColor = "rgba(0, 0, 0, 0.4)";
+
+            // Palm area Fill
             canvasCtx.beginPath();
             canvasCtx.moveTo(landmarks[0][0], landmarks[0][1]);
             canvasCtx.lineTo(landmarks[5][0], landmarks[5][1]);
@@ -177,15 +241,13 @@
             canvasCtx.fill();
             canvasCtx.stroke();
 
-            // Trace 5 fingers
-            const fingers = [
-                [0, 1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16], [17, 18, 19, 20]
-            ];
-            
-            fingers.forEach(nodes => {
+            // Trace Fingers
+            const lines = [[0,1,2,3,4], [5,6,7,8], [9,10,11,12], [13,14,15,16], [17,18,19,20]];
+            lines.forEach(nodes => {
                 canvasCtx.beginPath();
+                canvasCtx.moveTo(nodes[0], nodes[0]);
                 canvasCtx.moveTo(landmarks[nodes[0]][0], landmarks[nodes[0]][1]);
-                for(let i = 1; i < nodes.length; i++) {
+                for(let i=1; i<nodes.length; i++) {
                     canvasCtx.lineTo(landmarks[nodes[i]][0], landmarks[nodes[i]][1]);
                 }
                 canvasCtx.stroke();
@@ -193,14 +255,40 @@
             canvasCtx.restore();
         }
 
-        window.resetGame = function() {
-            isGameWon = false;
-            successScreen.classList.remove("visible");
-            uiOverlay.innerText = "👐 Put your hand up to make a shadow puppet!";
+        function triggerTransformation(centerPoint) {
+            isTransforming = true;
+            transformTimer = performance.now();
+            theaterFrame.classList.add("success-flash");
+            
+            // Turn the background blueprint guide into a colored animal artwork
+            guidePath.setAttribute("fill", levels[currentLevel].color);
+            guideSvg.style.opacity = "0.9";
+            uiPanel.innerHTML = `<span style="color:#2ecc71;">✨ SUCCESS! Shadow Morphed! ✨</span>`;
+
+            setTimeout(() => {
+                theaterFrame.classList.remove("success-flash");
+                // Advance level loop or restart
+                currentLevel = (currentLevel + 1) % levels.length;
+                loadLevel();
+            }, 4000); // Display the transformed animal puppet for 4 seconds before next level
         }
 
-        // Start everything
-        setupApp();
+        function drawAnimalTransformation(centerPoint) {
+            // Move the vector animal illustration dynamically to follow the kid's hand coordinate!
+            // We scale it from 0 to 1 over time to simulate a growing spell
+            let elapsed = (performance.now() - transformTimer) / 1000;
+            let scaleFactor = Math.min(elapsed * 2, 1.2); 
+            
+            // Mirror conversion to make the target layout stick directly on top of the tracked hand
+            let targetX = centerPoint[0];
+            let targetY = centerPoint[1];
+            
+            guideSvg.style.left = `${640 - targetX}px`;
+            guideSvg.style.top = `${targetY}px`;
+            guideSvg.style.transform = `translate(-50%, -50%) scale(${scaleFactor})`;
+        }
+
+        init();
     </script>
 </body>
 </html>
